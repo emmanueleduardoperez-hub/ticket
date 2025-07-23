@@ -1,0 +1,171 @@
+ticket_system/
+├── ticket_system.py
+├── database.py
+├── models.py
+├── README.md
+└── requirements.txt
+📦 requirements.txt
+txt
+Copiar
+Editar
+tabulate
+🧱 database.py
+python
+Copiar
+Editar
+import sqlite3
+
+DB_NAME = 'tickets.db'
+
+def get_connection():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_connection()
+    with conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT,
+                assigned_to TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT
+            )
+        ''')
+    conn.close()
+📄 models.py
+python
+Copiar
+Editar
+from database import get_connection
+
+def create_ticket(title, description):
+    conn = get_connection()
+    with conn:
+        conn.execute(
+            "INSERT INTO tickets (title, description, status) VALUES (?, ?, 'OPEN')",
+            (title, description)
+        )
+    conn.close()
+
+def assign_ticket(ticket_id, technician):
+    conn = get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE tickets SET assigned_to = ?, status = 'ASSIGNED' WHERE id = ? AND status = 'OPEN'",
+            (technician, ticket_id)
+        )
+    conn.close()
+
+def close_ticket(ticket_id):
+    conn = get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE tickets SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP WHERE id = ? AND status != 'CLOSED'",
+            (ticket_id,)
+        )
+    conn.close()
+
+def list_tickets():
+    conn = get_connection()
+    tickets = conn.execute("SELECT * FROM tickets ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return tickets
+🖥️ ticket_system.py
+python
+Copiar
+Editar
+import sys
+from tabulate import tabulate
+from database import init_db
+import models
+
+def show_menu():
+    print("\n--- Ticket System ---")
+    print("1. Crear ticket")
+    print("2. Asignar ticket")
+    print("3. Cerrar ticket")
+    print("4. Ver historial")
+    print("5. Salir")
+
+def main():
+    init_db()
+    while True:
+        show_menu()
+        choice = input("Elige una opción: ").strip()
+        
+        if choice == '1':
+            title = input("Título: ")
+            desc = input("Descripción: ")
+            models.create_ticket(title, desc)
+            print("✅ Ticket creado.")
+
+        elif choice == '2':
+            tid = input("ID del ticket a asignar: ")
+            tech = input("Asignar a (técnico): ")
+            models.assign_ticket(int(tid), tech)
+            print("✅ Ticket asignado.")
+
+        elif choice == '3':
+            tid = input("ID del ticket a cerrar: ")
+            models.close_ticket(int(tid))
+            print("✅ Ticket cerrado.")
+
+        elif choice == '4':
+            tickets = models.list_tickets()
+            headers = ["ID", "Título", "Asignado a", "Estado", "Creado", "Cerrado"]
+            rows = [
+                [t["id"], t["title"], t["assigned_to"] or "-", t["status"], t["created_at"], t["closed_at"] or "-"]
+                for t in tickets
+            ]
+            print(tabulate(rows, headers, tablefmt="grid"))
+
+        elif choice == '5':
+            print("👋 ¡Adiós!")
+            sys.exit(0)
+
+        else:
+            print("Opción inválida. Intenta de nuevo.")
+
+if __name__ == '__main__':
+    main()
+📝 README.md
+markdown
+Copiar
+Editar
+# Ticket System en Python
+
+Sistema de tickets simple con Python y SQLite.
+
+## Requisitos
+
+- Python 3.x  
+- Instalar dependencias:
+
+```bash
+pip install -r requirements.txt
+Uso
+bash
+Copiar
+Editar
+python ticket_system.py
+Funcionalidades:
+
+Crear ticket
+
+Asignar técnico
+
+Cerrar ticket
+
+Ver historial
+
+yaml
+Copiar
+Editar
+
+
+---
