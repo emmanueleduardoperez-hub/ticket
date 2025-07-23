@@ -1,15 +1,136 @@
-ticket_system/
-├── ticket_system.py
-├── database.py
-├── models.py
-├── README.md
-└── requirements.txt
-📦 requirements.txt
-txt
+import sys
+from tabulate import tabulate
+from database import init_db
+import models
+import auth
+
+def show_main_menu():
+    print("\n--- Bienvenido al Sistema de Tickets ---")
+    print("1. Iniciar sesión")
+    print("2. Registrarse")
+    print("3. Salir")
+
+def show_user_menu():
+    print("\n--- Menú de Usuario ---")
+    print("1. Crear ticket")
+    print("2. Asignar ticket")
+    print("3. Cerrar ticket")
+    print("4. Ver historial")
+    print("5. Cerrar sesión")
+
+def main():
+    init_db()
+    user_id = None
+
+    while user_id is None:
+        show_main_menu()
+        choice = input("Elige una opción: ").strip()
+        
+        if choice == '1':
+            username = input("Usuario: ")
+            password = input("Contraseña: ")
+            user_id = auth.login_user(username, password)
+            if user_id:
+                print("✅ Sesión iniciada.")
+            else:
+                print("❌ Usuario o contraseña incorrectos.")
+        elif choice == '2':
+            username = input("Nuevo usuario: ")
+            password = input("Contraseña: ")
+            email = input("Correo electrónico: ")
+            auth.register_user(username, password, email)
+        elif choice == '3':
+            sys.exit(0)
+        else:
+            print("Opción inválida.")
+
+    while True:
+        show_user_menu()
+        choice = input("Elige una opción: ").strip()
+
+        if choice == '1':
+            title = input("Título del ticket: ")
+            desc = input("Descripción: ")
+            models.create_ticket(title, desc, user_id)
+            print("✅ Ticket creado.")
+
+        elif choice == '2':
+            tid = input("ID del ticket a asignar: ")
+            tech = input("Asignar a (usuario): ")
+            models.assign_ticket(int(tid), tech)
+            print("✅ Ticket asignado.")
+
+        elif choice == '3':
+            tid = input("ID del ticket a cerrar: ")
+            models.close_ticket(int(tid))
+            print("✅ Ticket cerrado.")
+
+        elif choice == '4':
+            tickets = models.list_tickets()
+            headers = ["ID", "Título", "Asignado a", "Estado", "Creado", "Cerrado"]
+            rows = [
+                [t["id"], t["title"], t["assigned_to"] or "-", t["status"], t["created_at"], t["closed_at"] or "-"]
+                for t in tickets if t["user_id"] == user_id
+            ]
+            print(tabulate(rows, headers, tablefmt="grid"))
+
+        elif choice == '5':
+            print("🔒 Sesión cerrada.")
+            return main()
+
+        else:
+            print("Opción inválida.")
+
+if __name__ == '__main__':
+    main()
+✅ auth.py
+python
 Copiar
 Editar
-tabulate
-🧱 database.py
+import hashlib
+import re
+from database import get_connection
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def is_valid_email(email):
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+
+def is_strong_password(password):
+    return len(password) >= 8 and re.search(r'[A-Za-z]', password) and re.search(r'\d', password)
+
+def register_user(username, password, email):
+    if not is_valid_email(email):
+        print("❌ Correo inválido.")
+        return
+
+    if not is_strong_password(password):
+        print("❌ La contraseña debe tener mínimo 8 caracteres, incluir letras y números.")
+        return
+
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
+                (username, hash_password(password), email)
+            )
+        print("✅ Usuario registrado.")
+    except:
+        print("⚠️ El usuario o correo ya existe.")
+    conn.close()
+
+def login_user(username, password):
+    conn = get_connection()
+    cursor = conn.execute(
+        "SELECT id FROM users WHERE username = ? AND password_hash = ?",
+        (username, hash_password(password))
+    )
+    user = cursor.fetchone()
+    conn.close()
+    return user['id'] if user else None
+✅ database.py
 python
 Copiar
 Editar
@@ -26,6 +147,14 @@ def init_db():
     conn = get_connection()
     with conn:
         conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL
+            )
+        ''')
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -33,22 +162,51 @@ def init_db():
                 assigned_to TEXT,
                 status TEXT NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                closed_at TEXT
+                closed_at TEXT,
+                user_id INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id)
             )
         ''')
     conn.close()
-📄 models.py
+✅ models.py
 python
 Copiar
 Editar
 from database import get_connection
+import smtplib
+from email.message import EmailMessage
 
-def create_ticket(title, description):
+SMTP_SERVER = 'smtp.gmail.com'
+SMTP_PORT = 587
+EMAIL_FROM = 'tucorreo@gmail.com'  # Reemplaza con tu correo
+EMAIL_PASSWORD = 'clave_de_aplicacion'  # Reemplaza con tu clave de aplicación
+
+def send_assignment_email(username, ticket_id):
+    conn = get_connection()
+    user = conn.execute("SELECT email FROM users WHERE username = ?", (username,)).fetchone()
+    conn.close()
+    if user:
+        msg = EmailMessage()
+        msg['Subject'] = f'Ticket #{ticket_id} asignado'
+        msg['From'] = EMAIL_FROM
+        msg['To'] = user['email']
+        msg.set_content(f'Se te ha asignado el ticket #{ticket_id}.\nPor favor, revisa el sistema.')
+
+        try:
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_FROM, EMAIL_PASSWORD)
+                server.send_message(msg)
+            print(f"📧 Correo enviado a {user['email']}")
+        except Exception as e:
+            print(f"❌ Error al enviar correo: {e}")
+
+def create_ticket(title, description, user_id):
     conn = get_connection()
     with conn:
         conn.execute(
-            "INSERT INTO tickets (title, description, status) VALUES (?, ?, 'OPEN')",
-            (title, description)
+            "INSERT INTO tickets (title, description, status, user_id) VALUES (?, ?, 'OPEN', ?)",
+            (title, description, user_id)
         )
     conn.close()
 
@@ -60,6 +218,7 @@ def assign_ticket(ticket_id, technician):
             (technician, ticket_id)
         )
     conn.close()
+    send_assignment_email(technician, ticket_id)
 
 def close_ticket(ticket_id):
     conn = get_connection()
@@ -75,97 +234,47 @@ def list_tickets():
     tickets = conn.execute("SELECT * FROM tickets ORDER BY created_at DESC").fetchall()
     conn.close()
     return tickets
-🖥️ ticket_system.py
-python
+✅ requirements.txt
+txt
 Copiar
 Editar
-import sys
-from tabulate import tabulate
-from database import init_db
-import models
-
-def show_menu():
-    print("\n--- Ticket System ---")
-    print("1. Crear ticket")
-    print("2. Asignar ticket")
-    print("3. Cerrar ticket")
-    print("4. Ver historial")
-    print("5. Salir")
-
-def main():
-    init_db()
-    while True:
-        show_menu()
-        choice = input("Elige una opción: ").strip()
-        
-        if choice == '1':
-            title = input("Título: ")
-            desc = input("Descripción: ")
-            models.create_ticket(title, desc)
-            print("✅ Ticket creado.")
-
-        elif choice == '2':
-            tid = input("ID del ticket a asignar: ")
-            tech = input("Asignar a (técnico): ")
-            models.assign_ticket(int(tid), tech)
-            print("✅ Ticket asignado.")
-
-        elif choice == '3':
-            tid = input("ID del ticket a cerrar: ")
-            models.close_ticket(int(tid))
-            print("✅ Ticket cerrado.")
-
-        elif choice == '4':
-            tickets = models.list_tickets()
-            headers = ["ID", "Título", "Asignado a", "Estado", "Creado", "Cerrado"]
-            rows = [
-                [t["id"], t["title"], t["assigned_to"] or "-", t["status"], t["created_at"], t["closed_at"] or "-"]
-                for t in tickets
-            ]
-            print(tabulate(rows, headers, tablefmt="grid"))
-
-        elif choice == '5':
-            print("👋 ¡Adiós!")
-            sys.exit(0)
-
-        else:
-            print("Opción inválida. Intenta de nuevo.")
-
-if __name__ == '__main__':
-    main()
-📝 README.md
+tabulate
+✅ README.md
 markdown
 Copiar
 Editar
-# Ticket System en Python
+# Sistema de Tickets en Python
 
-Sistema de tickets simple con Python y SQLite.
+Sistema de gestión de tickets de soporte con autenticación, base de datos SQLite y notificación por correo.
+
+## Funciones
+
+- Registro con validación de correo y contraseña
+- Inicio de sesión
+- Crear, asignar y cerrar tickets
+- Ver historial
+- Enviar correo cuando un ticket es asignado
 
 ## Requisitos
 
-- Python 3.x  
-- Instalar dependencias:
-
 ```bash
-pip install -r requirements.txt
+pip install tabulate
+Configuración de correo
+Activa la verificación en dos pasos en tu cuenta Gmail
+
+Crea una clave de aplicación: https://myaccount.google.com/apppasswords
+
+Sustituye en models.py:
+
+python
+Copiar
+Editar
+EMAIL_FROM = 'tucorreo@gmail.com'
+EMAIL_PASSWORD = 'clave_generada'
 Uso
 bash
 Copiar
 Editar
 python ticket_system.py
-Funcionalidades:
-
-Crear ticket
-
-Asignar técnico
-
-Cerrar ticket
-
-Ver historial
-
-yaml
-Copiar
-Editar
 
 
----
